@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vídeo a pantalla completa</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: black;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+      color: white;
+      overflow: hidden;
+    }
+
+    /* el contenedor ocupa toda la pantalla */
+    .player {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: #000;
+      z-index: 0;
+    }
+
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover; /* llena, recorta lo necesario */
+      display: block;
+      outline: none;
+    }
+
+    /* Overlay pequeño con instrucciones */
+    .overlay {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.5);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 20;
+    }
+
+    .hidden { display: none; }
+
+    /* Botón grande para forzar pantalla completa si el navegador lo requiere */
+    .enter-btn {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: white;
+      padding: 14px 20px;
+      border-radius: 12px;
+      cursor: pointer;
+      z-index: 30;
+      backdrop-filter: blur(6px);
+      font-size: 16px;
+    }
+
+  </style>
+</head>
+<body>
+
+  <div class="player" id="player">
+    <!-- Reemplaza src por la URL o ruta de tu vídeo -->
+    <video id="video" playsinline muted autoplay loop preload="auto" tabindex="0">
+      <source src="video.mp4" type="video/mp4">
+      Tu navegador no soporta el elemento <code>video</code>.
+    </video>
+
+    <div class="overlay" id="overlay">Pulsa cualquier tecla o haz clic para controles. El vídeo está en bucle y se intentará poner en pantalla completa.</div>
+
+    <button class="enter-btn hidden" id="enterBtn">Entrar en pantalla completa</button>
+  </div>
+
+  <script>
+    (function () {
+      const video = document.getElementById('video');
+      const enterBtn = document.getElementById('enterBtn');
+      const overlay = document.getElementById('overlay');
+      const player = document.getElementById('player');
+
+      // Intentar reproducir y solicitar pantalla completa automáticamente.
+      async function start() {
+        try {
+          // algunos navegadores bloquean autoplay si no está muteado; el vídeo está muteado por defecto
+          await video.play();
+        } catch (err) {
+          console.warn('Autoplay bloqueado:', err);
+        }
+
+        // Intentar pedir pantalla completa (puede fallar si no hay interacción del usuario)
+        try {
+          if (document.fullscreenElement === null) {
+            await requestFullscreen(player);
+          }
+        } catch (err) {
+          // Si falla, mostramos el botón que el usuario puede pulsar para forzar fullscreen.
+          console.warn('Request fullscreen falló (necesita interacción):', err);
+          enterBtn.classList.remove('hidden');
+          overlay.textContent = 'Pulsa "Entrar en pantalla completa" si el vídeo no se ha puesto en pantalla completa automáticamente.';
+        }
+      }
+
+      // envoltorio para compatibilidad
+      async function requestFullscreen(element) {
+        if (element.requestFullscreen) return element.requestFullscreen();
+        if (element.webkitRequestFullscreen) return element.webkitRequestFullscreen();
+        if (element.msRequestFullscreen) return element.msRequestFullscreen();
+        throw new Error('API de fullscreen no soportada');
+      }
+
+      // Al cargar metadata intentamos iniciar
+      video.addEventListener('loadedmetadata', () => {
+        start();
+      });
+
+      // Mostrar botón si el autoplay fue bloqueado y el usuario hace un gesto
+      document.addEventListener('click', async (e) => {
+        if (video.paused) {
+          try { await video.play(); } catch (err) { }
+        }
+
+        // si no hay fullscreen, pedirla
+        if (!document.fullscreenElement) {
+          try {
+            await requestFullscreen(player);
+            enterBtn.classList.add('hidden');
+            overlay.classList.add('hidden');
+          } catch (err) {
+            // no hacer nada especial
+          }
+        }
+      }, { once: false });
+
+      // Botón explícito para entrar en pantalla completa
+      enterBtn.addEventListener('click', async () => {
+        try {
+          await requestFullscreen(player);
+          enterBtn.classList.add('hidden');
+          overlay.classList.add('hidden');
+        } catch (err) {
+          alert('No se pudo entrar en pantalla completa: ' + err.message);
+        }
+      });
+
+      // Pedir confirmación antes de salir (navegación / cerrar pestaña)
+      window.addEventListener('beforeunload', function (e) {
+        // Mostrar diálogo nativo del navegador para confirmar salida
+        const confirmationMessage = '¿Estás seguro que quieres salir? El vídeo se detendrá.';
+        (e || window.event).returnValue = confirmationMessage; // Gecko + IE
+        return confirmationMessage; // Webkit, Chrome etc.
+      });
+
+      // Detectar cambio de fullscreen: si salta fuera, preguntar y, si el usuario cancela, volver a entrar
+      document.addEventListener('fullscreenchange', async () => {
+        const isFs = !!document.fullscreenElement;
+        if (!isFs) {
+          // el usuario ha salido de pantalla completa (ej. con ESC)
+          const salir = confirm('¿Quieres salir de la vista a pantalla completa? Pulsa Aceptar para salir o Cancelar para volver a pantalla completa.');
+          if (!salir) {
+            // intentar reentrar
+            try {
+              await requestFullscreen(player);
+            } catch (err) {
+              console.warn('No se pudo volver a entrar en fullscreen:', err);
+              // mostrar botón para que el usuario lo intente manualmente
+              enterBtn.classList.remove('hidden');
+            }
+          } else {
+            // si confirma que quiere salir, mostrar overlay con opción de volver
+            overlay.textContent = 'Has salido de pantalla completa. Pulsa "Entrar en pantalla completa" para volver.';
+            overlay.classList.remove('hidden');
+            enterBtn.classList.remove('hidden');
+          }
+        } else {
+          // ocultar overlays cuando está en fullscreen
+          overlay.classList.add('hidden');
+          enterBtn.classList.add('hidden');
+        }
+      });
+
+      // Atajos: barra espaciadora para play/pause, M para mute, F para fullscreen
+      document.addEventListener('keydown', async (ev) => {
+        if (ev.code === 'Space') {
+          ev.preventDefault();
+          if (video.paused) await video.play(); else video.pause();
+        }
+        if (ev.key.toLowerCase() === 'm') {
+          video.muted = !video.muted;
+        }
+        if (ev.key.toLowerCase() === 'f') {
+          if (!document.fullscreenElement) await requestFullscreen(player);
+          else if (document.exitFullscreen) document.exitFullscreen();
+        }
+      });
+
+      // Si el vídeo termina (aunque está en loop), dejamos que vuelva a empezar — loop se encarga de eso
+      video.addEventListener('ended', () => {
+        video.currentTime = 0;
+        video.play();
+      });
+
+      // Mensaje si la fuente es la que viene por defecto (para que el usuario se acuerde de cambiarla)
+      window.addEventListener('load', () => {
+        if (video.querySelector('source') && video.querySelector('source').getAttribute('src') === 'video.mp4') {
+          overlay.textContent = 'Recuerda sustituir "video.mp4" por la URL o ruta de tu vídeo. Pulsa para iniciar.';
+        }
+      });
+
+    })();
+  </script>
+
+</body>
+</html>
